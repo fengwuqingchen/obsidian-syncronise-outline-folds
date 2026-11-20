@@ -1,71 +1,70 @@
-# Synchronise Outline Folds
+# Remember Outline Folds
 
-Keep heading folds in Obsidian's core **Outline** and the active Markdown document in sync. Collapse or expand a heading in either place and the other follows automatically.
+Remember the expansion/collapse state of Obsidian's core **Outline** for each Markdown note, independently of document folds.
 
-- Works in Live Preview, Source mode, and Reading view.
-- Adds an Outline collapse arrow to headings that have body text but no subheadings, so these headings can also be folded from the Outline.
-- Matches headings by source position, including repeated titles and Setext headings.
-- Preserves independent nested heading folds and unrelated list/frontmatter folds when toggling a heading in the Outline.
-- Follows the active document. Outlines showing a different file are left alone.
-- Remembers the heading folds of each document and restores them when the note is reopened.
-- Uses Obsidian's native fold state; never edits your Markdown to store folds.
+## Fork changes / 本 Fork 的修改
+
+This is a focused fork of [ChrisDavison/obsidian-syncronise-outline-folds](https://github.com/ChrisDavison/obsidian-syncronise-outline-folds), based on upstream 0.2.0 (`c2db77f`).
+
+- **Outline only:** collapsing or expanding the Outline never folds/unfolds the document. Document folds never drive the Outline.
+- Restore each note's Outline state after switching notes, reopening the Outline, or restarting the plugin/app. An empty saved state explicitly means **all expanded**.
+- Keep upstream's heading identities (level, original title, repeat count), JSON storage, rename/delete handling, event scheduling and checked core Outline adapter.
+- Remove document fold restoration, document observers/editor effects, and the extra Outline arrows for headings without children. The command now restores the saved Outline state.
+- Cursor, text selection and document scroll restoration remain the job of [Remember Cursor Position](https://github.com/dy-sh/obsidian-remember-cursor-position). Install that plugin separately; its code is not bundled here.
+
+中文说明：本 Fork 只记忆原生大纲的展开/折叠状态，取消与正文折叠的双向同步。折叠大纲不会收起正文，折叠正文也不会改变大纲。保留上游的存储、标题标识及文件重命名处理；光标、选区和正文阅读位置请搭配原版 Remember Cursor Position。
+
+The plugin ID and data format are unchanged to keep the fork small and allow existing saved folds to be reused. **This replaces the upstream plugin; do not run both versions.** Existing upstream data is interpreted as the initial Outline state and no longer applied to the document. Back up the plugin folder before replacing an installation. Community-plugin updates may replace this fork with upstream.
 
 ## Use
 
-Enable the **Outline** core plugin and **Settings → Editor → Fold heading**, then enable this plugin. Open the Outline and a Markdown note. Use the normal collapse arrows in either view, or Obsidian's fold/unfold commands. Outline navigation and heading dragging remain available.
+Enable the **Outline** core plugin, then enable **Remember Outline Folds**. Use the native Outline collapse arrows or its collapse/expand-all control. No replacement Outline, settings or changes to Markdown files are needed. Enabling document heading folding is not required.
 
-When a note is opened in a pane, its remembered heading folds are restored. After that, when switching modes, editing heading structure, or enabling the plugin, the document's existing folds take priority. If both views change before an update is processed, the document takes priority. Multiple Outlines for the active file converge to the same folds; simultaneous conflicting Outline changes are resolved in pane order.
+The command **Remember Outline Folds: Restore saved outline folds** reapplies the saved state to the current note's Outline. No hotkeys are assigned by default. Multiple Outlines for the active file share state; conflicting changes processed together are resolved in pane order. Outlines for a different file are left alone.
 
-The command **Synchronise outline folds: Synchronise folds from document** explicitly reapplies the current document state to the Outline. No hotkeys are assigned by default.
-
-Disabling the plugin removes its listeners and the extra Outline arrows. Existing document folds remain under Obsidian's control. The plugin has no settings.
+Disabling the plugin removes its listeners and observers and flushes saved data; it does not change document folds.
 
 ## Remembered folds
 
-The plugin saves which headings are folded in each note to its `data.json` in the plugin folder, so the state travels with the vault and is restored the next time the note is opened. Headings are identified by level, title, and repeat count rather than line number, so folds survive edits elsewhere in the note; renaming a heading forgets its fold. Notes with no folded headings are not stored. Saved entries follow renamed notes and folders and are removed when a note is deleted. List and frontmatter folds are left to Obsidian.
+State is saved in `data.json` inside the plugin folder. Heading identities use level, original title and repeat count, so inserting preceding text does not move the state to another heading. Renaming a heading forgets its state; inserting/reordering indistinguishable duplicate headings can change their identities. Nested headings retain their independent collapsed states.
+
+Saved entries follow renamed notes and folders and are removed when notes are deleted. Native automatic changes to the Outline can also be remembered; this fork does not disable Obsidian's own Outline behavior. The Outline's scroll position is not persisted.
 
 ## Install manually
 
-1. Download `main.js` and `manifest.json` from the [latest release](https://github.com/ChrisDavison/obsidian-syncronise-outline-folds/releases/latest), or build them using the steps below.
-2. Create `<vault>/<config-folder>/plugins/synchronise-outline-folds/`. The default config folder is `.obsidian`.
-3. Copy both files into that folder.
-4. Reload Obsidian, then enable **Synchronise Outline Folds** under **Settings → Community plugins**.
+Build this fork using the commands below, or use a test build explicitly linked from the fork. Upstream release assets still contain the original two-way synchronisation behavior.
+
+1. Back up your existing `synchronise-outline-folds` plugin folder if present.
+2. Copy this fork's `main.js` and `manifest.json` into `<vault>/<config-folder>/plugins/synchronise-outline-folds/` (the default config folder is `.obsidian`).
+3. Reload the plugin, then enable **Remember Outline Folds** under **Settings → Community plugins**.
+4. Optionally install **Remember Cursor Position** separately for document cursor/scroll restoration.
+
+To roll back, disable the fork and restore the backed-up plugin folder.
 
 ## Compatibility and privacy
 
-Requires Obsidian **1.14.4 or newer**. Desktop integration is verified on macOS with 1.14.4. The runtime uses browser and Obsidian APIs without Node.js or Electron imports, so mobile is permitted by the manifest; physical iOS and Android devices have not been tested.
+Requires Obsidian **1.14.4 or newer** (the upstream minimum is retained). Mobile is permitted by the manifest; physical iOS and Android devices have not been tested.
 
-**Compatibility boundary:** Obsidian does not publish an Outline fold API or Markdown fold-state API. The adapter in `src/compat.ts` checks the core Outline tree and Markdown mode interfaces before using them. An Obsidian update or a plugin that replaces those views could break synchronisation. Unsupported interfaces are skipped with one notice. No core methods or prototypes are patched. Custom Outline replacements, embedded notes, Canvas cards, and synchronising several editor panes with each other are outside the scope of this plugin.
+**Compatibility boundary:** Obsidian does not publish a core Outline fold API. `src/compat.ts` checks the internal Outline interfaces before use; unsupported interfaces are skipped with one notice. No core methods or prototypes are patched. Custom Outline replacements, embedded notes and Canvas cards are outside the scope.
 
-Heading folding must remain enabled in Obsidian. Notes without headings have nothing to synchronise.
-
-There are no network requests, telemetry, accounts, payments, filesystem access outside the vault, or runtime dependencies bundled into the plugin. It reads the active note and core view state in memory, changes only native view folds, and writes only its own `data.json` containing note paths and heading titles. Obsidian and CodeMirror are supplied by the app.
+No network requests, telemetry or accounts are used. Only this plugin's own `data.json` is written, containing note paths and heading titles; Markdown content is not changed.
 
 ## Develop and verify
 
-Use Node.js 22 or newer and npm.
+Use Node.js 22 or newer and npm (CI uses Node.js 24).
 
 ```sh
 npm ci
-npm run check      # official Obsidian ESLint rules, unit tests, typecheck, build, asset checks
+npm run check      # ESLint, unit/integration tests, typecheck, build and asset checks
 npm run dev        # watch source and rebuild main.js
 ```
 
-`main.js` is generated and intentionally excluded from source control. The production build externalises Obsidian, CodeMirror, and Lezer, and emits readable CommonJS without source maps. The lockfile records development dependencies; none are shipped inside `main.js`.
+`main.js` is generated and excluded from source control. Existing upstream fold utilities and their tests are retained to minimise unrelated changes; the fork's runtime does not import document-fold operations. Additional tests exercise the actual plugin lifecycle with mocked Obsidian views, including independent document/Outline states, per-note restoration, empty states, multiple Outlines, rebuilds, renames and cleanup.
 
-Unit tests cover heading boundaries, duplicate titles, saved heading identity, saved-data validation, preservation of nested/list/frontmatter folds, and unsupported core interfaces. Live verification on macOS with Obsidian 1.14.4 covered both directions in all three modes, multiple Outlines, file switching, and disable/re-enable cleanup.
+**Fork verification (2026-11-20):** `npm run check` passed locally (14 tests, lint, typecheck, build and asset checks). Live Obsidian verification has not been completed; test this build in a disposable vault before daily use.
 
-The optional live integration check requires a disposable vault at `/tmp/synchronise-outline-folds-test` containing `tests/Folds.md`, with the plugin and core Outline enabled. Keep its window in the foreground and run `node scripts/live-check.mjs` with the Obsidian CLI on PATH. It changes folds and modes, creates `Other.md`, and reloads the plugin; it refuses other vault paths.
-
-## Release provenance
-
-Tagged releases are built and checked by GitHub Actions. Only `main.js` and `manifest.json` are uploaded, with build attestations stored on GitHub. After downloading a release, verify either file with the GitHub CLI:
-
-```sh
-gh attestation verify main.js --repo ChrisDavison/obsidian-syncronise-outline-folds
-gh attestation verify manifest.json --repo ChrisDavison/obsidian-syncronise-outline-folds
-```
+The optional live integration check (`node scripts/live-check.mjs`) requires the disposable vault `/tmp/synchronise-outline-folds-test` with `tests/Folds.md` copied to `Folds.md`, this fork installed, and the core Outline enabled. It refuses other vault paths. It changes test view states, creates `Other.md`, and reloads the plugin. Automated checks do not replace testing in your own Obsidian setup.
 
 ## License
 
-[MIT](LICENSE), copyright Chris Davison.
+[MIT](LICENSE), copyright Chris Davison. Upstream attribution is retained.

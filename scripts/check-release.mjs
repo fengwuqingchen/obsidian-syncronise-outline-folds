@@ -17,6 +17,7 @@ assert.equal(typeof manifest.isDesktopOnly, 'boolean');
 for (const name of ['README.md', 'LICENSE', 'main.js']) assert.ok((await readFile(name)).length > 0);
 const bundle = await readFile('main.js', 'utf8');
 assert.match(bundle, /require\("obsidian"\)/);
-assert.match(bundle, /require\("@codemirror\/view"\)/);
+// This fork does not access or change Markdown fold state.
+assert.ok(!bundle.includes("applyFoldInfo"));
 assert.ok(!bundle.includes('sourceMappingURL'));
 console.info('Release metadata and bundle checks passed.');

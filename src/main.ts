@@ -1,12 +1,10 @@
 import { debounce, MarkdownView, Notice, Plugin, TFile } from 'obsidian';
-import { EditorView } from '@codemirror/view';
-import { getMode, getOutline, readFolds, type FoldMode, type OutlineItem } from './compat';
-import { changedFolds, headingKeys, headingRanges, mergeFolds, readSaved, sameFolds, type SavedFolds } from './folds';
+import { getOutline, type OutlineItem } from './compat';
+import { changedFolds, headingKeys, readSaved, type SavedFolds } from './folds';
 
 interface Baseline {
   context: string;
-  mode: FoldMode;
-  document: Set<number>;
+  items: OutlineItem[];
   outline: Map<number, boolean>;
 }
 
@@ -16,23 +14,18 @@ export default class SynchroniseOutlineFolds extends Plugin {
   private warned = false;
   private baselines = new WeakMap<object, Baseline>();
   private observers = new Map<HTMLElement, MutationObserver>();
-  private addedControls = new Set<OutlineItem>();
   private saved: SavedFolds = {};
-  private restored = new WeakMap<MarkdownView, string>();
   private save = debounce(() => void this.saveData({ folds: this.saved }), 1000, true);
 
   async onload(): Promise<void> {
     this.saved = readSaved(await this.loadData());
-    this.registerEditorExtension(EditorView.updateListener.of(update => {
-      if (update.docChanged || update.transactions.some(transaction => transaction.effects.length > 0)) this.schedule();
-    }));
     this.registerEvent(this.app.workspace.on('active-leaf-change', () => this.schedule()));
     this.registerEvent(this.app.workspace.on('layout-change', () => this.schedule()));
     this.registerEvent(this.app.workspace.on('file-open', () => this.schedule()));
     this.registerEvent(this.app.metadataCache.on('changed', () => this.schedule()));
     this.registerEvent(this.app.vault.on('rename', (file, oldPath) => this.move(oldPath, file instanceof TFile ? file.path : null, file.path)));
     this.registerEvent(this.app.vault.on('delete', file => this.move(file.path, null, null)));
-    this.addCommand({ id: 'synchronise-now', name: 'Synchronise folds from document', callback: () => {
+    this.addCommand({ id: 'synchronise-now', name: 'Restore saved outline folds', callback: () => {
       this.baselines = new WeakMap();
       this.schedule();
     } });
@@ -47,11 +40,6 @@ export default class SynchroniseOutlineFolds extends Plugin {
       if (this.timer !== null) window.clearTimeout(this.timer);
       for (const observer of this.observers.values()) observer.disconnect();
       this.observers.clear();
-      for (const item of this.addedControls) {
-        // Core may have rebuilt the tree since we added the control.
-        if (item.vChildren.children.length === 0) item.setCollapsible(false);
-      }
-      this.addedControls.clear();
       this.baselines = new WeakMap();
       this.save.run();
     });
@@ -77,10 +65,9 @@ export default class SynchroniseOutlineFolds extends Plugin {
   }
 
   private remember(path: string, keys: string[]): void {
-    const previous = this.saved[path] ?? [];
-    if (previous.length === keys.length && previous.every((key, index) => key === keys[index])) return;
-    if (keys.length) this.saved[path] = keys;
-    else delete this.saved[path];
+    const previous = this.saved[path];
+    if (previous && previous.length === keys.length && previous.every((key, index) => key === keys[index])) return;
+    this.saved[path] = keys; // An empty list explicitly remembers "all expanded".
     this.save();
   }
 
@@ -89,7 +76,7 @@ export default class SynchroniseOutlineFolds extends Plugin {
     this.timer = window.setTimeout(() => {
       this.timer = null;
       try { this.synchronise(); } catch (error) {
-        if (!this.warned) console.error('Synchronise Outline Folds: incompatible core folding interface', error);
+        if (!this.warned) console.error('Remember Outline Folds: incompatible core outline interface', error);
         this.warn();
       }
     }, 0);
@@ -98,7 +85,7 @@ export default class SynchroniseOutlineFolds extends Plugin {
   private warn(): void {
     if (this.warned) return;
     this.warned = true;
-    new Notice('Synchronise outline folds: folding is unavailable in this view or Obsidian version.');
+    new Notice('Remember outline folds: the core outline interface is unavailable in this Obsidian version.');
   }
 
   private synchronise(): void {
@@ -109,77 +96,57 @@ export default class SynchroniseOutlineFolds extends Plugin {
       ?? (recent instanceof MarkdownView ? recent : null);
     const leaves = workspace.getLeavesOfType('outline');
     const elements = new Set(leaves.map(leaf => leaf.view.containerEl));
-    if (document) elements.add(document.containerEl);
     this.observe(elements);
-    // Do not retain tree nodes removed by a core Outline rebuild.
-    const currentItems = new Set(leaves.flatMap(leaf => getOutline(leaf.view)?.cachedHeadingDom ?? []));
-    for (const item of this.addedControls) if (!currentItems.has(item)) this.addedControls.delete(item);
     if (!document?.file) return;
-    const mode = getMode(document);
-    const info = mode && readFolds(mode);
-    if (!mode || !info) { this.warn(); return; }
-    const text = document.getViewData();
-    if (text.split('\n').length !== info.lines) return;
     const cache = this.app.metadataCache.getFileCache(document.file)?.headings;
     if (!cache) return;
-    const headings = cache.map(heading => ({ line: heading.position.start.line, endLine: heading.position.end.line, level: heading.level }));
-    const ranges = headingRanges(headings, info.lines);
-    const context = JSON.stringify([document.file.path, text, headings]);
-    let documentFolds = new Set(info.folds.filter(fold => ranges.has(fold.from)).map(fold => fold.from));
-    let currentInfo = info;
     const keys = headingKeys(cache.map(heading => ({ line: heading.position.start.line, endLine: heading.position.end.line,
       level: heading.level, text: heading.heading })));
     const path = document.file.path;
+    const context = JSON.stringify([path, [...keys]]);
+    const ready: { outline: object; items: OutlineItem[] }[] = [];
 
-    // Reapply the saved heading folds the first time this view shows the note.
-    if (this.restored.get(document) !== path) {
-      this.restored.set(document, path);
-      const saved = this.saved[path];
-      if (saved) {
-        const wanted = new Set(saved);
-        const changes = new Map([...ranges.keys()].map(line => [line, wanted.has(keys.get(line)!)]));
-        currentInfo = mergeFolds(currentInfo, ranges, changes);
-        const restored = new Set(currentInfo.folds.filter(fold => ranges.has(fold.from)).map(fold => fold.from));
-        if (!sameFolds(restored, documentFolds)) {
-          mode.applyFoldInfo(currentInfo);
-          documentFolds = restored;
-        }
-      }
-    }
-
+    // Read changes before restoring any pane, so another Outline cannot overwrite a user toggle.
     for (const leaf of leaves) {
       const outline = getOutline(leaf.view);
       if (!outline) { this.warn(); continue; }
-      // Pinned/linked Outlines for another file must never affect the active document.
-      if (outline.file?.path !== document.file.path) continue;
+      if (outline.file?.path !== path) continue;
       const items = outline.cachedHeadingDom;
-      if (items.length !== headings.length || items.some((item, index) => item.heading.position.start.line !== headings[index]?.line
-        || item.heading.level !== headings[index]?.level)) continue;
-      const states = new Map(items.filter(item => ranges.has(item.heading.position.start.line))
+      if (items.length !== cache.length || items.some((item, index) => item.heading.position.start.line !== cache[index]?.position.start.line
+        || item.heading.level !== cache[index]?.level)) continue;
+      const states = new Map(items.filter(item => item.collapsible)
         .map(item => [item.heading.position.start.line, item.collapsed]));
       const previous = this.baselines.get(outline);
-      if (previous?.context === context && previous.mode === mode && sameFolds(previous.document, documentFolds)) {
+      if (previous?.context === context && previous.items.every((item, index) => item === items[index])) {
         const changes = changedFolds(previous.outline, states);
         if (changes.size) {
-          currentInfo = mergeFolds(currentInfo, ranges, changes);
-          mode.applyFoldInfo(currentInfo);
-          documentFolds = new Set(currentInfo.folds.filter(fold => ranges.has(fold.from)).map(fold => fold.from));
+          const wanted = new Set(this.saved[path] ?? []);
+          for (const [line, collapsed] of changes) {
+            const key = keys.get(line)!;
+            if (collapsed) wanted.add(key);
+            else wanted.delete(key);
+          }
+          this.remember(path, [...keys.values()].filter(key => wanted.has(key)));
         }
+      } else if (!(path in this.saved)) {
+        // Adopt native defaults only on the first visit; never replace saved state during a rebuild.
+        this.remember(path, [...states].filter(([, collapsed]) => collapsed).map(([line]) => keys.get(line)!));
       }
+      ready.push({ outline, items });
+    }
+
+    const wanted = new Set(this.saved[path] ?? []);
+    for (const { outline, items } of ready) {
+      const states = new Map<number, boolean>();
       for (const item of items) {
+        if (!item.collapsible) continue;
         const line = item.heading.position.start.line;
-        if (!ranges.has(line)) continue;
-        if (!item.collapsible) {
-          item.setCollapsible(true);
-          this.addedControls.add(item);
-        }
-        const collapsed = documentFolds.has(line);
+        const collapsed = wanted.has(keys.get(line)!);
         if (item.collapsed !== collapsed) void item.setCollapsed(collapsed, false);
         states.set(line, collapsed);
       }
-      this.baselines.set(outline, { context, mode, document: documentFolds, outline: states });
+      this.baselines.set(outline, { context, items: [...items], outline: states });
     }
-    this.remember(path, [...documentFolds].sort((a, b) => a - b).map(line => keys.get(line)!));
   }
 
   private observe(elements: Set<HTMLElement>): void {

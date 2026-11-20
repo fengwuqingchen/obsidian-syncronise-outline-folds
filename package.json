@@ -2,7 +2,7 @@
   "name": "synchronise-outline-folds",
   "version": "0.2.0",
   "private": true,
-  "description": "Synchronise heading folds between the core Outline and the active Markdown document.",
+  "description": "Remember core Outline expansion state independently of Markdown document folds.",
   "license": "MIT",
   "author": "Chris Davison",
   "scripts": {
